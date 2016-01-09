@@ -1,0 +1,144 @@
+#!/usr/bin/env python
+
+import collections
+import fileinput
+import re
+import string
+import math
+
+alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+def num(char):
+    return alphabet.index(char)
+
+def char(num):
+    return alphabet[num]
+
+def average(l):
+    return sum(l)/len(l)
+
+def stddev(s):
+    avg = average(s.values())
+    var = map(lambda x: (x-avg)**2,s.values())
+    return math.sqrt(average(var))
+
+# Split a ciphertext modulo n (the suspected keyword length)
+def transpose(text, n):
+    text = re.sub(r'\W+','',text.lower())
+    texts = [ "" for i in range(n)]
+    i = 0
+    for char in text:
+        texts[i%n] += char
+        i += 1
+    return texts
+
+# Zip the substrings back into a single string
+def rtranspose(texts):
+    out = ""
+    i = 0
+    while (len(texts) > 0):
+        n = len(texts)
+        if(len(texts[i%n]) < 1):
+            del(texts[i%n])
+            continue
+        out += texts[i%n][0]
+        texts[i%n] = texts[i%n][1:]
+        i += 1
+    return out
+
+# Calculate the character frequencies for a given sample
+# or ciphertext
+def freqlist(text):
+    f = [0 for char in alphabet]
+    i = 1
+    for char in text:
+        if char.lower() in alphabet:
+            f[num(char.lower())] += 1
+            i+=1
+    return [float(count)/i for count in f]
+
+# Compare two character frequency lists
+def compfreqs(freq, reffreq):
+    fdict = dictfromlist(freq)
+    rdict = dictfromlist(reffreq)
+    corr = 0
+    for key in fdict.keys():
+        corr += (rdict[key] - fdict[key])**2
+    return corr
+
+# Shift the list by n elements to the left with wraparound
+def shiftlist(l, n):
+    return l[n:]+l[:n]
+
+def dictfromlist(freqlist):
+    fdict = collections.defaultdict(float)
+    char = 'a'
+    for f in freqlist:
+        fdict[char] = f
+        char = chr(ord(char)+1)
+    return fdict
+
+# Read everything from stdin into a single string
+def read_stdin():
+    c = ""
+    for line in fileinput.input():
+        c += line
+    return c
+
+# Determine the character frequencies of an English language
+# sample (or use the precalculated one if "english.txt" is not
+# readable in the current directory)
+def read_freqs():
+    try:
+        with open("english.txt") as f:
+            return freqlist(f.read())
+    except:
+            return [0.08344, 0.01697, 0.01917, 0.05399, 0.11203, 0.01805, 0.02464, 0.06022, 0.06468, 0.0028, 0.01301, 0.03983, 0.02368, 0.0748, 0.0836, 0.01381, 0.00044, 0.04644, 0.05763, 0.09671, 0.03188, 0.00676, 0.03031, 0.00119, 0.02349, 0.00042]
+
+# Return a "rotate by n" function
+def rot_n(n):
+    lc = string.lowercase
+    trans = string.maketrans(lc, lc[n:] + lc[:n])
+    return lambda s: string.translate(s, trans)
+
+# Attack a single Caesar-encrypted ciphertext by shifting the 
+# frequency list; pick the shift that maximizes the correlation
+def attack_caesar(cipher):
+    maxf = {}
+    for i in xrange(len(alphabet)):
+        shiftfreq = shiftlist(eng_freqs, i)
+        maxf[i] = compfreqs(freqlist(cipher), shiftfreq)
+    n = min(maxf, key=maxf.get)
+    confidence = stddev(maxf)
+#    return (rot_n(n)(cipher), n, confidence)
+    return {"confidence": confidence, "plaintext": rot_n(n)(cipher), "n": n}
+
+# Attack the Vigenere-encrypted text by splitting it into i
+# substrings (where i is the length of the suspected keyword)
+# and join it back together.
+def attack_vigenere(c,l):
+    out = [attack_caesar(i) for i in transpose(c,l)]
+    conf = sum([block["confidence"] for block in out])
+    keyword = string.join([char(-block["n"]) for block in out], '')
+    plaintext = rtranspose([block["plaintext"] for block in out])
+    return({"plaintext": plaintext, "key": keyword, "confidence": conf})
+
+def beauford_key(plain, cipher, n):
+    key = ""
+    for i in range(n):
+        key += char((num(plain[i])+num(cipher[i]))%len(alphabet))
+    return key
+
+def attack_beauford(c,l):
+    reverse = string.join([char(-num(ch)-1) for ch in c],'')
+    res = attack_vigenere(reverse,l)
+    res["key"] = beauford_key(res["plaintext"], c, l)
+    return(res)
+
+eng_freqs = read_freqs()
+c = read_stdin()
+c = re.sub(r'\W+','',c.lower())
+for i in range(1,10):
+    res = attack_beauford(c,i)
+    print("n={0}\tKey=\"{1}\"\tPlaintext=\"{2}\"\n".format(i,res["key"],res["plaintext"]))
+
